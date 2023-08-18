@@ -1,0 +1,8 @@
+version: 2
+
+sources:
+  - name: stripe
+    database: fourth-eon-396309
+    schema: dbt_fortegamoya
+    tables:
+      - name: payments

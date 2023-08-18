@@ -1,0 +1,9 @@
+version: 2
+
+sources:
+  - name: jaffle_shop
+    database: fourth-eon-396309
+    schema: dbt_fortegamoya
+    tables:
+      - name: orders
+      - name: customers
