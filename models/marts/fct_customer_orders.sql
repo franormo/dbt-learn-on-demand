@@ -1,79 +1,61 @@
 with 
---imports CTEs
+
 customers as (
-    select * from {{ source('jaffle_shop', 'customers') }}
-),
 
-orders as (
-    select * from {{ source('jaffle_shop', 'orders') }}
-),
+  select * from {{ ref('stg_jaffle_shop__customers') }}
 
-payments as (
-    select * from {{ source('stripe', 'payments') }}
-    where STATUS <> 'fail'
-),
-
---logical CTEs
-order_total_payments as (
-    select 
-        ORDERID as order_id, 
-        max(CREATED) as payment_finalized_date, 
-        sum(AMOUNT) / 100.0 as total_amount_paid
-    from payments
-    group by 1
 ),
 
 paid_orders as (
-    select 
-        Orders.ID as order_id,
-        Orders.USER_ID	as customer_id,
-        Orders.ORDER_DATE as order_placed_at,
-        Orders.STATUS as order_status,
-        p.total_amount_paid,
-        p.payment_finalized_date,
-        C.FIRST_NAME    as customer_first_name,
-        C.LAST_NAME as customer_last_name
-    from orders
-    left join order_total_payments p 
-    on orders.ID = p.order_id
-    left join customers C 
-    on orders.USER_ID = C.ID 
+
+  select * from {{ ref('int_orders') }}
+
 ),
 
-
 final as (
-    select
-        paid_orders.*,
 
-        ROW_NUMBER() over (
-            order by paid_orders.order_id
-        ) as transaction_seq,
+  select
+    paid_orders.order_id,
+    paid_orders.customer_id,
+    paid_orders.order_placed_at,
+    paid_orders.order_status,
+    paid_orders.total_amount_paid,
+    paid_orders.payment_finalized_date,
+    customers.customer_first_name,
+    customers.customer_last_name,
 
-        ROW_NUMBER() over (
-            partition by paid_orders.customer_id 
-            order by paid_orders.order_id
+    -- sales transaction sequence
+    row_number() over (order by paid_orders.order_placed_at, paid_orders.order_id) as transaction_seq,
+
+    -- customer sales sequence
+    row_number() over (
+        partition by paid_orders.customer_id
+        order by paid_orders.order_placed_at, paid_orders.order_id
         ) as customer_sales_seq,
 
-        case 
-            when 
-                rank() over(
-                    partition by paid_orders.order_id 
-                    order by paid_orders.order_placed_at
-                ) = 1 then 'new'
-            else 'return' 
-            end as nvsr,
+    -- new vs returning customer
+    case 
+      when (
+      rank() over (
+        partition by paid_orders.customer_id
+        order by paid_orders.order_placed_at, paid_orders.order_id
+        ) = 1
+      ) then 'new'
+    else 'return' end as nvsr,
 
-        sum(total_amount_paid) over (
-            partition by paid_orders.customer_id
-            order by paid_orders.order_placed_at
-        ) as customer_lifetime_value,
+    -- customer lifetime value
+    sum(paid_orders.total_amount_paid) over (
+      partition by paid_orders.customer_id
+      order by paid_orders.order_placed_at, paid_orders.order_id
+      ) as customer_lifetime_value,
 
-        first_value(paid_orders.order_placed_at) over (
-            partition by paid_orders.order_id 
-            order by paid_orders.order_placed_at
-        ) as fdos
+    -- first day of sale
+    first_value(paid_orders.order_placed_at) over (
+      partition by paid_orders.customer_id
+      order by paid_orders.order_placed_at, paid_orders.order_id
+      ) as fdos
     from paid_orders
-    order by order_id
+    left join customers on paid_orders.customer_id = customers.customer_id
 )
 
 select * from final
